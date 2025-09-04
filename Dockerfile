@@ -51,6 +51,20 @@ RUN npm pack --silent
 # RUN tar -C . -czf /tmp/code-server.tgz dist
 
 
+# =======================================================================
+# Stage 1b: Build your custom extension (dev-assess-extension)
+# =======================================================================
+FROM node:22-bookworm AS extbuilder
+WORKDIR /ext
+
+# Copy just the extension directory
+COPY dev-assess-extension/ ./dev-assess-extension/
+
+WORKDIR /ext/dev-assess-extension
+RUN npm ci \
+ && npx --yes @vscode/vsce@latest package -o /artifacts/dev-assess-extension.vsix
+
+
 # ---------- Stage 2: CODER RUNTIME (SAFEST) ----------
 FROM codercom/code-server:4.103.2
 
@@ -76,6 +90,15 @@ RUN mkdir -p /usr/local/lib/node_modules/code-server \
 # copy and link a binary/entrypoint as needed:
 # COPY --from=builder /src/dist /home/coder/code-server
 # ENV PATH="/home/coder/code-server/bin:${PATH}"
+
+
+# =======================================================================
+# Install custom extension (dev-assess-extension)
+# =======================================================================
+COPY --from=extbuilder /artifacts/dev-assess-extension.vsix /tmp/dev-assess-extension.vsix
+RUN mkdir -p /home/coder/.local/share/code-server/extensions \
+ && HOME=/home/coder su -s /bin/sh -c "code-server --install-extension /tmp/dev-assess-extension.vsix --force" coder \
+ && rm -f /tmp/dev-assess-extension.vsix
 
 USER 1000
 
