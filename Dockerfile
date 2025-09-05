@@ -7,10 +7,8 @@ ENV CI=1
 WORKDIR /src
 
 # Copy your forked source
-# (If you have a monorepo, COPY just the code-server folder + lockfiles)
-# from the repo root, pass context properly
-COPY . .
-#COPY dev-assess-ide/ /src
+# (Building from parent directory, so copy dev-assess-ide contents into /src)
+COPY dev-assess-ide/ .
 
 # ▶ tools needed to fetch VS Code + ensure yarn classic is available
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -57,12 +55,36 @@ RUN npm pack --silent
 FROM node:22-bookworm AS extbuilder
 WORKDIR /ext
 
-# Copy just the extension directory
+# Copy extension and schemagen directories
 COPY dev-assess-extension/ ./dev-assess-extension/
+COPY schemagen/ ./schemagen/
 
+# Install monorepo dependencies first
 WORKDIR /ext/dev-assess-extension
-RUN npm ci \
- && npx --yes @vscode/vsce@latest package -o /artifacts/dev-assess-extension.vsix
+RUN npm ci
+
+# Build packages sequentially (no npm workspaces configured)
+RUN cd packages/config-types && npm ci && npm run build && cd ../..
+RUN cd packages/fetch && npm ci && npm run build && cd ../..
+RUN cd packages/config-yaml && npm ci && npm run build && cd ../..
+RUN cd packages/llm-info && npm ci && npm run build && cd ../..
+RUN cd packages/openai-adapters && npm ci && npm run build && cd ../..
+RUN cd packages/hub && npm ci && npm run build && cd ../..
+
+# Build core package 
+RUN cd core && npm ci && npm run build && cd ..
+
+# Build GUI (required by VS Code extension)
+RUN cd gui && npm ci && npm run build && cd ..
+
+# Finally build and package the VS Code extension
+WORKDIR /ext/dev-assess-extension/extensions/vscode
+RUN npm ci
+RUN npm run prepackage
+RUN mkdir -p build
+RUN npm run esbuild
+RUN mkdir -p /artifacts \
+ && npx --yes @vscode/vsce@latest package --allow-star-activation --no-dependencies -o /artifacts/dev-assess-extension.vsix
 
 
 # ---------- Stage 2: CODER RUNTIME (SAFEST) ----------
@@ -96,17 +118,36 @@ RUN mkdir -p /usr/local/lib/node_modules/code-server \
 # Install custom extension (dev-assess-extension)
 # =======================================================================
 COPY --from=extbuilder /artifacts/dev-assess-extension.vsix /tmp/dev-assess-extension.vsix
-RUN mkdir -p /home/coder/.local/share/code-server/extensions \
- && HOME=/home/coder su -s /bin/sh -c "code-server --install-extension /tmp/dev-assess-extension.vsix --force" coder \
- && rm -f /tmp/dev-assess-extension.vsix
+
+# Create startup script that installs extension after volume mount
+RUN printf '#!/bin/bash\n\
+set -e\n\
+\n\
+# Ensure extensions directory exists (as coder user)\n\
+mkdir -p /home/coder/.local/share/code-server/extensions\n\
+\n\
+# Check if our extension is already installed\n\
+if [ ! -f /home/coder/.local/share/code-server/extensions/extensions.json ] || ! grep -q "continue" /home/coder/.local/share/code-server/extensions/extensions.json 2>/dev/null; then\n\
+    echo "Installing DevAssess extension..."\n\
+    code-server --install-extension /tmp/dev-assess-extension.vsix --force\n\
+    echo "DevAssess extension installed successfully!"\n\
+else\n\
+    echo "DevAssess extension already installed."\n\
+fi\n\
+\n\
+# Start code-server with passed arguments\n\
+exec code-server "$@"\n' > /usr/local/bin/startup.sh
+
+RUN chmod +x /usr/local/bin/startup.sh
 
 USER 1000
 
 # code-server listens on 0.0.0.0:8080 inside the container
 EXPOSE 8080
 
-# You can still override args via Helm (e.g., --auth password)
-CMD ["code-server","--bind-addr","0.0.0.0:8080"]
+# Use startup script as entrypoint
+ENTRYPOINT ["/usr/local/bin/startup.sh"]
+CMD ["--bind-addr","0.0.0.0:8080"]
 
 
 # ---------- Stage 2: SLIM RUNTIME (INDEPENDENT) ----------

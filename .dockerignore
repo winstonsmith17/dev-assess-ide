@@ -1,4 +1,4 @@
-# --- VCS / editors ---
+--- VCS / editors ---
 .git
 .github
 .gitmodules
@@ -6,10 +6,10 @@
 **/.idea
 **/.vscode
 
-# --- dependencies (reinstall inside the image) ---
+--- dependencies (reinstall inside the image) ---
 **/node_modules
 
-# --- build outputs / caches ---
+--- build outputs / caches ---
 **/dist
 **/build
 **/.cache
@@ -17,13 +17,18 @@ coverage
 tmp
 *.log
 
-# --- artifacts you don’t want in context ---
+--- artifacts you don’t want in context ---
 release-packages
 
-# keep the helm chart
+keep the helm chart
 !ci/helm-chart/**
-# keep code-server build + dev scripts (needed for npm run build)
+keep code-server build + dev scripts (needed for npm run build)
 !ci/build
 !ci/build/**
 !ci/dev
 !ci/dev/**
+
+keep these paths in the context:
+!dev-assess-ide/**
+!dev-assess-extension/**
+!infra/helm-chart/**
