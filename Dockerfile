@@ -119,34 +119,21 @@ RUN mkdir -p /usr/local/lib/node_modules/code-server \
 # =======================================================================
 COPY --from=extbuilder /artifacts/dev-assess-extension.vsix /tmp/dev-assess-extension.vsix
 
-# Create startup script that installs extension after volume mount
-RUN printf '#!/bin/bash\n\
-set -e\n\
-\n\
-# Ensure extensions directory exists (as coder user)\n\
-mkdir -p /home/coder/.local/share/code-server/extensions\n\
-\n\
-# Check if our extension is already installed\n\
-if [ ! -f /home/coder/.local/share/code-server/extensions/extensions.json ] || ! grep -q "continue" /home/coder/.local/share/code-server/extensions/extensions.json 2>/dev/null; then\n\
-    echo "Installing DevAssess extension..."\n\
-    code-server --install-extension /tmp/dev-assess-extension.vsix --force\n\
-    echo "DevAssess extension installed successfully!"\n\
-else\n\
-    echo "DevAssess extension already installed."\n\
-fi\n\
-\n\
-# Start code-server with passed arguments\n\
-exec code-server "$@"\n' > /usr/local/bin/startup.sh
+# Pre-create a global extensions directory outside /home/coder so PV doesn't mask it
+RUN mkdir -p /opt/code-server/extensions /opt/code-server/data \
+ && chown -R 1000:1000 /opt/code-server
 
-RUN chmod +x /usr/local/bin/startup.sh
+# Install the extension at build-time into the global extensions dir, then clean up the VSIX
+RUN su -s /bin/sh -c "code-server --user-data-dir /opt/code-server/data --extensions-dir /opt/code-server/extensions --install-extension /tmp/dev-assess-extension.vsix --force" coder \
+ && rm -f /tmp/dev-assess-extension.vsix
 
 USER 1000
 
 # code-server listens on 0.0.0.0:8080 inside the container
 EXPOSE 8080
 
-# Use startup script as entrypoint
-ENTRYPOINT ["/usr/local/bin/startup.sh"]
+# Use code-server directly; args provided by chart
+ENTRYPOINT ["code-server"]
 CMD ["--bind-addr","0.0.0.0:8080"]
 
 
