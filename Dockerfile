@@ -59,32 +59,26 @@ WORKDIR /ext
 COPY dev-assess-extension/ ./dev-assess-extension/
 COPY schemagen/ ./schemagen/
 
-# Install monorepo dependencies first
 WORKDIR /ext/dev-assess-extension
 RUN npm ci
 
-# Build packages sequentially (no npm workspaces configured)
+# Build local packages required by Core/GUI
 RUN cd packages/config-types && npm ci && npm run build && cd ../..
 RUN cd packages/fetch && npm ci && npm run build && cd ../..
 RUN cd packages/config-yaml && npm ci && npm run build && cd ../..
 RUN cd packages/llm-info && npm ci && npm run build && cd ../..
 RUN cd packages/openai-adapters && npm ci && npm run build && cd ../..
-RUN cd packages/hub && npm ci && npm run build && cd ../..
+RUN cd packages/terminal-security && npm ci && npm run build && cd ../..
 
-# Build core package 
+# Build Core and GUI (GUI must output gui/dist)
 RUN cd core && npm ci && npm run build && cd ..
-
-# Build GUI (required by VS Code extension)
 RUN cd gui && npm ci && npm run build && cd ..
 
-# Finally build and package the VS Code extension
+# Create VSIX using the extension's packaging script
 WORKDIR /ext/dev-assess-extension/extensions/vscode
 RUN npm ci
-RUN npm run prepackage
-RUN mkdir -p build
-RUN npm run esbuild
-RUN mkdir -p /artifacts \
- && npx --yes @vscode/vsce@latest package --allow-star-activation --no-dependencies -o /artifacts/dev-assess-extension.vsix
+RUN npm run package
+RUN mkdir -p /artifacts && cp build/*.vsix /artifacts/dev-assess-extension.vsix
 
 
 # ---------- Stage 2: CODER RUNTIME (SAFEST) ----------
