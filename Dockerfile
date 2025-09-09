@@ -23,18 +23,6 @@ RUN corepack enable && corepack prepare yarn@1.22.22 --activate
 ARG VSCODE_REF=1.103.2
 RUN git clone --depth=1 --branch ${VSCODE_REF} https://github.com/microsoft/vscode.git lib/vscode
 
-# --- Choose your package manager (uncomment ONE block) ---
-
-# PNPM
-# RUN corepack enable && corepack prepare pnpm@latest --activate
-# RUN pnpm install --frozen-lockfile
-# RUN pnpm build
-
-# YARN
-# RUN corepack enable && corepack prepare yarn@stable --activate
-# RUN yarn install --frozen-lockfile
-# RUN yarn build
-
 # NPM
 RUN npm ci
 RUN npm run build
@@ -43,10 +31,6 @@ RUN npm run build
 # (Adjust paths to your fork’s output – common pattern shown)
 RUN npm pack --silent
 # This will create something like: code-server-<version>.tgz in /src
-
-# Alternatively, if the build outputs a folder with the runtime app,
-# archive it to a predictable path we can COPY in the next stage:
-# RUN tar -C . -czf /tmp/code-server.tgz dist
 
 
 # =======================================================================
@@ -60,25 +44,25 @@ COPY dev-assess-extension/ ./dev-assess-extension/
 COPY schemagen/ ./schemagen/
 
 WORKDIR /ext/dev-assess-extension
-RUN npm ci
 
-# Build local packages required by Core/GUI
-RUN cd packages/config-types && npm ci && npm run build && cd ../..
-RUN cd packages/fetch && npm ci && npm run build && cd ../..
-RUN cd packages/config-yaml && npm ci && npm run build && cd ../..
-RUN cd packages/llm-info && npm ci && npm run build && cd ../..
-RUN cd packages/openai-adapters && npm ci && npm run build && cd ../..
-RUN cd packages/terminal-security && npm ci && npm run build && cd ../..
+# Use CI installs and skip large, optional downloads (e.g. puppeteer)
+ENV CI=true \
+    PUPPETEER_SKIP_DOWNLOAD=true
 
-# Build Core and GUI (GUI must output gui/dist)
-RUN cd core && npm ci && npm run build && cd ..
-RUN cd gui && npm ci && npm run build && cd ..
+# Install root deps and build all local packages via the project script
+RUN npm ci \
+ && node ./scripts/build-packages.js
+
+# Build Core and GUI (GUI build ensures gui/dist exists for packaging)
+RUN cd core && npm ci && npm run build && cd .. \
+ && cd gui && npm ci && npm run build && cd ..
 
 # Create VSIX using the extension's packaging script
 WORKDIR /ext/dev-assess-extension/extensions/vscode
-RUN npm ci
-RUN npm run package
-RUN mkdir -p /artifacts && cp build/*.vsix /artifacts/dev-assess-extension.vsix
+RUN npm ci \
+ && npm run package \
+ && mkdir -p /artifacts \
+ && cp build/*.vsix /artifacts/dev-assess-extension.vsix
 
 
 # ---------- Stage 2: CODER RUNTIME (SAFEST) ----------
@@ -96,16 +80,6 @@ RUN mkdir -p /usr/local/lib/node_modules/code-server \
  && tar -xzf /tmp/code-server.tgz -C /usr/local/lib/node_modules/code-server --strip-components=1 \
  && ln -sf /usr/local/lib/node_modules/code-server/bin/code-server /usr/local/bin/code-server \
  && rm -f /tmp/code-server.tgz
-
-# If you produced a generic tarball of the app:
-# COPY --from=builder /tmp/code-server.tgz /tmp/code-server.tgz
-# RUN mkdir -p ~/.local/lib && tar -xzf /tmp/code-server.tgz -C ~/.local/lib \
-#  && echo 'export PATH="$HOME/.local/lib/code-server/bin:$PATH"' >> ~/.profile
-
-# If your build outputs directly to a folder (e.g., /src/dist),
-# copy and link a binary/entrypoint as needed:
-# COPY --from=builder /src/dist /home/coder/code-server
-# ENV PATH="/home/coder/code-server/bin:${PATH}"
 
 
 # =======================================================================
@@ -128,35 +102,6 @@ EXPOSE 8080
 
 # Use code-server directly; args provided by chart
 ENTRYPOINT ["code-server"]
-CMD ["--bind-addr","0.0.0.0:8080"]
-
-
-# ---------- Stage 2: SLIM RUNTIME (INDEPENDENT) ----------
-# Uncomment this block if you do NOT want to depend on codercom/code-server
-# FROM node:22-bookworm-slim AS runtime
-#
-# RUN apt-get update && apt-get install -y --no-install-recommends \
-#       ca-certificates tini git curl unzip \
-#       libnss3 libxkbfile1 libsecret-1-0 fonts-dejavu \
-#   && rm -rf /var/lib/apt/lists/*
-#
-# RUN useradd -m -u 1000 coder
-# USER 1000
-# WORKDIR /home/coder
-#
-# # If you produced an npm pack tarball in Stage 1:
-# COPY --from=builder /src/code-server-*.tgz /tmp/code-server.tgz
-# RUN npm install -g /tmp/code-server.tgz
-#
-# # If you produced a generic tarball of the app:
-# # COPY --from=builder /tmp/code-server.tgz /tmp/code-server.tgz
-# # RUN mkdir -p ~/.local/lib && tar -xzf /tmp/code-server.tgz -C ~/.local/lib \
-# #  && echo 'export PATH="$HOME/.local/lib/code-server/bin:$PATH"' >> ~/.profile
-#
-# # If your build outputs directly to a folder (e.g., /src/dist):
-# # COPY --from=builder /src/dist /home/coder/code-server
-# # ENV PATH="/home/coder/code-server/bin:${PATH}"
-#
-# EXPOSE 8080
-# ENTRYPOINT ["tini","-g","--"]
-# CMD ["code-server","--bind-addr","0.0.0.0:8080"]
+CMD ["--bind-addr","0.0.0.0:8080",
+     "--user-data-dir","/opt/code-server/data",
+     "--extensions-dir","/opt/code-server/extensions"]
