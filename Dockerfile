@@ -102,6 +102,4 @@ EXPOSE 8080
 
 # Use code-server directly; args provided by chart
 ENTRYPOINT ["code-server"]
-CMD ["--bind-addr","0.0.0.0:8080",
-     "--user-data-dir","/opt/code-server/data",
-     "--extensions-dir","/opt/code-server/extensions"]
+CMD ["--bind-addr","0.0.0.0:8080"]
